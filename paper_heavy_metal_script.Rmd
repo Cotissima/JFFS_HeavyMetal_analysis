@@ -1,0 +1,1203 @@
+---
+title: "JFFS_HM_Script"
+author: "Constanza Toro"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script contains all the code used for the exploration and statistical analysis used in "HM Paper name".       
+  
+This script includes: 
+1. Data summary (excluding bone)
+2 Analysis of faecal samples
+2.1 Exploratory analysis of faecal and soil samples   
+2.1.1 PCA   
+2.1.2 Cluster analysis   
+3. Statistical analysis of faecal samples     
+3.1 Correlation analysis between selected elements
+3.1.1 Spearman correlation for all fur seal samples
+3.1.2 Spearman correlation AFS samples
+3.1.3 Spearman correlation JFFS samples
+4. Statistical comparison 
+4.1 Cadmium  
+4.2 Copper  
+4.3 Phosphorus  
+4.4 Mercury  
+4.5 Selenium  
+4.6 Zinc  
+5. Exploratory analysis of other non-soil samples
+5.1 PCA
+5.1.1 Faecal and other non-soil samples 
+5.1.2 Non-soil samples  
+5.2 Descriptive statistics by species  
+5.2.1 Myctophids  
+5.2.2 Sea cucumber  
+5.2.3 Octopus  
+5.2.4 Lobster  
+5.2.5 Maggots  
+5.3 Trace element distribution in octopus  
+5.3.1 Cd  
+5.3.2 Zn  
+5.3.3 Hg  
+5.3.4 Se  
+6 JFFS bones  
+
+<p>&nbsp;</p>
+- Load libraries
+```{r,warning=FALSE,message=FALSE}
+library(tidyverse)
+library(RColorBrewer)
+library(kableExtra)
+library(gridExtra)
+```  
+<p>&nbsp;</p>   
+- Load metadata  
+```{r}
+# Heavy metal metada with all the samples analysed
+read.csv("HM_env.csv", header = TRUE) -> HM
+```  
+This dataset includes 19 faecal samples (5 collected from Antarctic fur seals (AN) and 14 from Juan Fernandez fur seals (JFFS)). It also contains other samples that were collected to have an idea on possible sources of exposure. *note: samples obtain from lobster, octopus, cucumber and maggots were opportunistically collected. Due to the small sample size, the role of these samples is to give minimal orientation for future work rather than giving conclusive answers about contamination sources*.  
+<p>&nbsp;</p>  
+# 1. Descriptive summary  
+```{r}
+HM %>%
+  pivot_longer("Li_6":"Pr", 
+               names_to = "Elements") -> HMLong
+
+# transform from ng to ug/g (ppm)
+round(HMLong$value/1000, 4) -> HMLong$value
+
+# summary descriptive statistics
+cols <- c("Species","Elements","Sample_type")
+
+as.data.frame (HMLong %>%
+                 group_by(across(all_of(cols))) %>%
+                 summarise(median = median(value),
+                           mean = round(mean(value),3),
+                           sd = round(sd(value),3)) %>%
+                 ungroup()) -> All_descript
+
+kbl(All_descript,
+    format = "html", 
+    digits = 2,
+    row.names = FALSE, 
+    caption = "Table 1. Statistical summary (all samples minus bones") %>%
+  kable_styling(bootstrap_options = c("condensed",
+                                      "striped"), 
+                full_width = F) %>%
+  scroll_box(width = "100%", height = "400px")
+
+```  
+<p>&nbsp;</p> 
+# 2. Analysis of faecal samples
+## 2.1. Exploratory analysis of faecal and soil samples   
+First, limiting soil contamination bias on faecal samples
+### 2.1.1 PCA
+- Prepare data and run prcomp  
+```{r}
+# Remove samples other than faeces or soil
+HM %>%
+  filter(Sample_type %in% c("faeces", 
+                            "Soil")) %>%
+  select_if(~ !any(is.na(.)))-> HMF 
+
+# Transform to matrix
+as.matrix(HMF[-c(1:5)]) -> HMF_Mat
+row.names(HMF_Mat) <- HMF$Sample_ID
+
+# Run PCA
+prcomp(HMF_Mat, 
+       center = TRUE, 
+       scale. = TRUE) -> F.PCA
+```   
+<p>&nbsp;</p>   
+- PCA summary
+```{r}
+# summary
+summary(F.PCA)  
+```   
+The first two principal component explained 74.6% of the total variation
+<p>&nbsp;</p>
+**Figure 1:** Screeplot
+```{r}
+# screeplot
+screeplot(F.PCA, 
+          npcs = min(10, length(F.PCA$sdev)),
+          type= "lines")
+```  
+<p>&nbsp;</p>
+**Figure 2:** Principal component analysis of faecal and soil samples
+```{r, warning=FALSE,message=FALSE}
+library(ggbiplot)
+# All samples
+ggbiplot(F.PCA, 
+         ellipse = TRUE,
+         shape = HMF$Sample_type) +
+  geom_point(aes(shape=factor(HMF$Sample_type),
+                 colour=factor(HMF$Species)),
+             size=4) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) +
+  labs(shape="Sample type", 
+       colour="Species") +
+   scale_color_brewer(palette = "Paired")
+
+Vectorize(detach)(name=paste0("package:", c("ggbiplot", "plyr")), 
+                  unload=TRUE, character.only=TRUE)
+```   
+
+This principal component analysis (PCA) shows clear clustering according to sample type. To avoid the effects of soil contamination in the faecal samples, only those elements that are characteristic of faeces will be included in further analysis.    
+*note* Thalium and Osmium were omited due to the Na's in Soil.   
+<p>&nbsp;</p>
+### 2.1.2 Cluster analysis
+**Figure 3:** Cluster dendogram
+```{R}
+hclust(dist(F.PCA$x), method = "ward.D2") -> Hclus
+plot(Hclus)
+```   
+<p>&nbsp;</p>
+**Figure 4:** heatmap + Cluster
+```{r}
+lhei=c(0.2,5)
+heatmap(HMF_Mat, 
+        Colv = NA, 
+        Rowv = as.dendrogram(Hclus),
+        margins = c(5,2),
+        scale="column",  
+        cexRow = 0.8, 
+        cexCol = 0.6) 
+```    
+
+Samples 7, 10, 15 and, 18 show higher concentrations of almost all trace elements when visually compared to other faecal samples. It is likely that these samples were contaminated with soil at the moment of collection. However, only elements found in low concentrations in soil are going to be kept for further analysis. This approach will reduce the bias introduced by soil contamination. Based on the heatmap visualisation Phosphorus (P), Copper (Cu), Zinc (Zn), Selenium (Se), Cadmium (Cd) and, Mercury (Hg) will be included in this analysis. From This heatmap, it is possible to observe a different trend in the selected elements between fur seal species. P seems to be found in slightly higher concentrations in JFFS than soil, however, two faecal samples are likely to be outliers (18JJFS5 and 18JFFS13). P will be retained for now
+<p>&nbsp;</p> 
+# 3 Statistical analysis of faecal samples  
+## 3.1 Correlation analysis far faecal samples  
+### 3.1.1 Spearman correlation for all fur seal samples
+- Prepare data and run spearman correlation for all the samples
+```{r,warning=FALSE,message=FALSE}
+#load libraries
+library(Hmisc)
+library(corrplot)
+
+# using only faecal dataset
+HMF %>%
+  filter(Sample_type != "Soil") %>%
+  select("Sample_ID", 
+         "Species", 
+         "Sample_type", 
+         "Cu",
+         "P",
+         "Zn", 
+         "Se", 
+         "Cd",
+         "Hg") -> HMFfil
+
+
+rcorr(as.matrix(HMFfil[4:9]),
+               type = "spearman") -> Fcor
+```   
+<p>&nbsp;</p>
+**Figure 5:** Correlation plot between six trace elements found in fur seal faecal samples collected from two species
+```{r,warning=FALSE,message=FALSE}
+corrplot(Fcor$r,
+         tl.cex = 0.6,
+         tl.col = "black",
+         type = "upper", 
+         order = "hclust",
+         hclust.method = "ward.D2",
+         p.mat = Fcor$P,
+         sig.level = 0.05,
+         insig = "blank")
+```   
+The size of the circles is proportional to the strength of the correlation. Only significant correlations (p <= 0.05) are shown.   
+All correlations had a positive direction.   
+Se, Zn, and Hg were very strongly correlated. These three elements were also strongly correlated with Cd.  P only showed a weak correlation with Cd. Finally, Cu showed a moderate correlation with Se, Zn and Hg and a low correlation with Cd.  
+**Correlation interpretation**
+(-)0.80 to 1.00 Very strong  
+(-)0.60 to 0.79 Strong  
+(-)0.40 to 0.59 Moderate  
+(-)0.20 to 0.39 Weak  
+(-)0.00 to 0.19 Very weak  
+<p>&nbsp;</p>
+- individual visualisation   
+**Figure 6:** Hg vs Zn   
+```{r, warning=FALSE,message=FALSE}
+ggplot(HMFfil, aes(x = Zn/1000, y = Hg/1000, 
+                   color = Species,
+                   shape = Species)) +
+  geom_point(size = 3) +
+  geom_smooth(method = lm, 
+              se = FALSE,
+              aes(fill = Species)) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title = element_text(size = 11),
+        legend.text = element_text(size = 9),
+        legend.key.size = unit(0.5, "cm"),
+        legend.key.width = unit(0.5,"cm")) +
+  guides(fill = guide_legend(keywidth = 0.5, 
+                             keyheight = 0.5,
+                             ncol = 2 )) +
+  xlab("Zn concentration (ug/g dw)") +
+  ylab("Hg concentration (ug/g dw)")
+```
+<p>&nbsp;</p>
+- Linear regression (line of best fit for each Species)
+```{r}
+# JFFS
+HMF %>%
+  filter(Species == "JF") %>%
+  select("Sample_ID", 
+         "Species", 
+         "Sample_type", 
+         "Cu",
+         "P",
+         "Zn", 
+         "Se", 
+         "Cd",
+         "Hg") -> HMFfilJF
+
+lm(Hg ~ Zn, data = HMFfilJF) -> lm.JF
+summary(lm.JF)
+
+# AFS
+HMF %>%
+  filter(Species == "AN") %>%
+  select("Sample_ID", 
+         "Species", 
+         "Sample_type", 
+         "Cu",
+         "P",
+         "Zn", 
+         "Se", 
+         "Cd",
+         "Hg") -> HMFfilAN
+
+lm(Hg ~ Zn, data = HMFfilAN) -> lm.AN
+summary(lm.AN)
+```   
+<p>&nbsp;</p>
+**Figure 7:** Hg vs Se   
+```{r, warning=FALSE,message=FALSE}
+ggplot(HMFfil, aes(x = Se/1000, y = Hg/1000, 
+                   color = Species,
+                   shape = Species)) +
+  geom_point(size = 3) +
+  geom_smooth(method = lm, 
+              se = FALSE,
+              aes(fill = Species)) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title = element_text(size = 11),
+        legend.text = element_text(size = 9),
+        legend.key.size = unit(0.5, "cm"),
+        legend.key.width = unit(0.5,"cm")) +
+  guides(fill = guide_legend(keywidth = 0.5, 
+                             keyheight = 0.5,
+                             ncol = 2 )) +
+  xlab("Se concentration (ug/g dw)") +
+  ylab("Hg concentration (ug/g dw)")
+```   
+<p>&nbsp;</p>
+- Linear regression (line of best fit for each Species)
+```{r}
+# JFFS
+lm(Hg ~ Se, data = HMFfilJF) -> lm.JF
+summary(lm.JF)
+
+# AFS
+lm(Hg ~ Se, data = HMFfilAN) -> lm.AN
+summary(lm.AN)
+```   
+<p>&nbsp;</p>
+**Figure 8:** Se vs Zn
+```{r, warning=FALSE,message=FALSE}
+ggplot(HMFfil, aes(x = Zn/1000, 
+                   y = Se/1000, 
+                   color = Species,
+                   shape = Species)) +
+  geom_point(size = 3) +
+  geom_smooth(method = lm, 
+              se = FALSE,
+              aes(fill = Species)) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title = element_text(size = 11),
+        legend.text = element_text(size = 9),
+        legend.key.size = unit(0.5, "cm"),
+        legend.key.width = unit(0.5,"cm")) +
+  guides(fill = guide_legend(keywidth = 0.5, 
+                             keyheight = 0.5,
+                             ncol = 2 )) +
+  xlab("Zn concentration (ug/g dw)") +
+  ylab("Se concentration (ug/g dw)")
+```  
+<p>&nbsp;</p>
+- Linear regression (line of best fit for each Species)
+```{r}
+# JFFS
+lm(Se ~ Zn, data = HMFfilJF) -> lm.JF
+summary(lm.JF)
+
+# AFS
+lm(Se ~ Zn, data = HMFfilAN) -> lm.AN
+summary(lm.AN)
+```   
+<p>&nbsp;</p>
+### 3.2.2. Spearman correlation for AN fur seal samples  
+- Prepare data and run spearman correlation for all the samples
+```{r,warning=FALSE,message=FALSE}
+# using only faecal dataset
+rcorr(as.matrix(HMFfilAN[4:9]),
+               type = "spearman") -> Fcor
+```   
+<p>&nbsp;</p>
+**Figure 9:** Correlation plot between six trace elements found in Antarctic fur seal faecal samples 
+```{r,warning=FALSE,message=FALSE}
+corrplot(Fcor$r,
+         tl.cex = 0.6,
+         tl.col = "black",
+         type = "upper", 
+         order = "hclust",
+         hclust.method = "ward.D2",
+         p.mat = Fcor$P,
+         sig.level = 0.05,
+         insig = "blank")
+```   
+<p>&nbsp;</p>
+#### 3.2.3 Spearman correlation for JF fur seal samples  
+- Prepare data and run spearman correlation for all the samples
+```{r,warning=FALSE,message=FALSE}
+# using only faecal dataset
+rcorr(as.matrix(HMFfilJF[4:9]),
+      type = "spearman") -> Fcor
+```   
+<p>&nbsp;</p>
+**Figure 10:** Correlation plot between six trace elements found in JFFS
+```{r,warning=FALSE,message=FALSE}
+corrplot(Fcor$r,
+         tl.cex = 0.6,
+         tl.col = "black",
+         type = "upper", 
+         order = "hclust",
+         hclust.method = "ward.D2",
+         p.mat = Fcor$P,
+         sig.level = 0.05,
+         insig = "blank")
+```   
+<p>&nbsp;</p>
+
+# 4. Statistical comparison between JFFS and AFS  
+<p>&nbsp;</p>
+## 4.1 Cadmium   
+**Figure 16:** Box plot representation of Cd concentration across fur seal species
+```{r}
+#keep faecal samples only
+HM %>%
+  filter(Sample_type == "faeces") -> HMFonly
+  
+HMFonly %>%
+  ggplot(aes(x = Species, 
+             y= log(Cd/1000), 
+             fill = Species, 
+             colour = Species)) +
+  geom_boxplot(outlier.shape = NA, 
+               show.legend = FALSE,
+               alpha = 0.2) +
+  geom_jitter(height = 0, size = 2, 
+              width = 0.2,
+              show.legend = FALSE) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  ylab(" Cd ppm dw (Log)") +
+  xlab(NULL) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "grey"))
+```   
+<p>&nbsp;</p>
+- Wilcoxon rank sum non-parametric test
+```{r}
+wilcox.test(Cd/1000 ~ Species, 
+            data = HMFonly, conf.int = T)
+```
+A non parametric test was chosen due to the unequal sample sizes between the groups and the overall low sample numbers. The test was performed with untransformed data.  
+JFFS faeces had significantly higher Cd conmpared to AN faeces. <p>&nbsp;</p>
+## 4.2 Copper 
+**Figure 17:** Box plot representation of Cu concentration across fur seal species
+```{r}
+HMFonly %>%
+  ggplot(aes(x = Species, 
+             y= Cu/1000, 
+             fill = Species, 
+             colour = Species)) +
+  geom_boxplot(outlier.shape = NA, 
+               show.legend = FALSE,
+               alpha = 0.2) +
+  geom_jitter(height = 0, size = 2, 
+              width = 0.2,
+              show.legend = FALSE) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  ylab(" Cu (ug/g dw)") +
+  xlab(NULL) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "grey"))
+```   
+<p>&nbsp;</p>
+- Wilcoxon rank sum non-parametric test
+```{r}
+wilcox.test(Cu/1000 ~ Species, 
+            data = HMFonly,
+            conf.int = T)
+```
+No significant differences   
+<p>&nbsp;</p>
+## 4.3 Phosphorus 
+**Figure 18:** Box plot representation of P concentration across fur seal species
+```{r}
+HMFonly %>%
+  ggplot(aes(x = Species, 
+             y= P/1000, 
+             fill = Species, 
+             colour = Species)) +
+  geom_boxplot(outlier.shape = NA, 
+               show.legend = FALSE,
+               alpha = 0.2) +
+  geom_jitter(height = 0, size = 2, 
+              width = 0.2,
+              show.legend = FALSE) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  ylab(" P (mg/g dw)") +
+  xlab(NULL) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "grey"))
+```   
+<p>&nbsp;</p>
+- Wilcoxon rank sum non-parametric test
+```{r}
+wilcox.test(P/1000 ~ Species, 
+            data = HMFonly,
+            conf.int = T)
+```
+Based on the non parametric testing, JFFS faeces had higher concetrations of P but it also has two possible outliers.  
+<p>&nbsp;</p>
+## 4.4 Mercury 
+**Figure 19:** Box plot representation of Hg concentrationacross fur seal species
+```{r}
+HMFonly %>%
+  ggplot(aes(x = Species, 
+             y= Hg, 
+             fill = Species, 
+             colour = Species)) +
+  geom_boxplot(outlier.shape = NA, 
+               show.legend = FALSE,
+               alpha = 0.2) +
+  geom_jitter(height = 0, size = 2, 
+              width = 0.2,
+              show.legend = FALSE) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  ylab("Hg (ug/g dw)") +
+  xlab(NULL) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "grey"))
+```   
+<p>&nbsp;</p>
+- Wilcoxon rank sum non-parametric test
+```{r}
+wilcox.test(Hg ~ Species, 
+            data = HMFonly,
+            conf.int = T)
+```
+Based on the non parametric testing, JFFS faeces had significantly higher concentrations of Hg.  
+<p>&nbsp;</p>
+## 4.5 Selenium
+**Figure 20:** Box plot representation of Se concentrations across fur seal species
+```{r}
+HMFonly %>%
+  ggplot(aes(x = Species, 
+             y= Se/1000, 
+             fill = Species, 
+             colour = Species)) +
+  geom_boxplot(outlier.shape = NA, 
+               show.legend = FALSE,
+               alpha = 0.2) +
+  geom_jitter(height = 0, size = 2, 
+              width = 0.2,
+              show.legend = FALSE) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  ylab("Se (ug/g dw)") +
+  xlab(NULL) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "grey"))
+```   
+<p>&nbsp;</p>
+- Wilcoxon rank sum non-parametric test
+```{r}
+wilcox.test(Se/1000 ~ Species, 
+            data = HMFonly,
+            conf.int = T)
+```
+Based on the non parametric testing, JFFS faeces had significantly higher concetrations of Se.  
+<p>&nbsp;</p>
+#### 2.2.2.5 Zinc 
+**Figure 21:** Box plot representation of Zn concentrationacross fur seal species
+```{r}
+HMFonly %>%
+  ggplot(aes(x = Species, 
+             y= Zn/1000, 
+             fill = Species, 
+             colour = Species)) +
+  geom_boxplot(outlier.shape = NA, 
+               show.legend = FALSE,
+               alpha = 0.2) +
+  geom_jitter(height = 0, size = 2, 
+              width = 0.2,
+              show.legend = FALSE) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  ylab("Zn (ug/g dw)") +
+  xlab(NULL) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "grey"))
+```   
+<p>&nbsp;</p>
+- Wilcoxon rank sum non-parametric test
+```{r}
+wilcox.test(Zn/1000 ~ Species, 
+            data = HMFonly,
+            conf.int = T)
+```
+Based on the non parametric testing, JFFS faeces had significantly higher concetrations of Zn. 
+<p>&nbsp;</p>
+# 5. Exploratory analysis of other non-soil samples
+## 5.1 PCA
+### 5.1.1 faecal and other non-soil samples  
+- Prepare data and run prcomp
+```{r}
+# Remove samples other than faeces or soil
+HM %>%
+  filter(Sample_type != "Soil") %>%
+  select("Sample_ID", 
+         "Species", 
+         "Sample_type", 
+         "Cu",
+         "P",
+         "Zn", 
+         "Se", 
+         "Cd",
+         "Hg") -> HMfil
+
+# Transform to matrix
+as.matrix(HMfil[-c(1:4)]) -> HMfilM
+row.names(HMfilM) <- HMfil$Sample_ID
+
+# Run PCA
+prcomp(HMfilM, 
+       center = TRUE, 
+       scale. = TRUE) -> F.PCA
+```   
+<p>&nbsp;</p>   
+- PCA summary
+```{r}
+# summary
+summary(F.PCA)
+```   
+<p>&nbsp;</p>
+**Figure 22:** Screeplot
+```{r}
+# screeplot
+screeplot(F.PCA, 
+          npcs = min(10, length(F.PCA$sdev)),
+          type= "lines")
+```   
+<p>&nbsp;</p>
+**Figure 23:** Principal component analysis of filtered dataset
+```{r, warning=FALSE,message=FALSE}
+library(ggbiplot)
+# All samples
+ggbiplot(F.PCA, 
+         ellipse = TRUE,
+         obs.scale = 1,
+         var.scale = 1) +
+  geom_point(aes(shape=factor(HMfil$Species),
+                 colour=factor(HMfil$Sample_type)),
+             size=3) +
+  scale_shape_manual (values= c(15, 16, 0, 1, 17, 18, 5, 2, 19, 7,10)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title = element_text(size = 11),
+        legend.text = element_text(size = 9),
+        legend.key.size = unit(0.5, "cm"),
+        legend.key.width = unit(0.5,"cm")) +
+  guides(fill = guide_legend(keywidth = 0.5, 
+                                 keyheight = 0.5,
+                             ncol = 2 )) +
+  labs(shape="Species", 
+       colour="Sample type") +
+   scale_color_brewer(palette = "Paired")
+```    
+In this PCA, the PC1 explains 62.9% of the variance. PC1 is mostly influenced by the elements Zn, Se, Hg, and Cd. The first three elements seem to be highly correlated as their vectors have very similar direction and length.  
+PC2, which explains 18.9% of the variance, is influenced by P.P concentrations particularly characterise two samples.   
+   
+<p>&nbsp;</p> 
+### 5.1.2 Exploratory analysis of non-faecal samples only 
+- Prepare data and run prcomp
+```{r}
+# Remove samples other than faeces or soil
+HM %>%
+  filter(!Sample_type %in% c("Soil", "faeces")) %>%
+  select("Sample_ID", 
+         "Species", 
+         "Sample_type", 
+         "Cu",
+         "P",
+         "Zn", 
+         "Se", 
+         "Cd",
+         "Hg") -> HMfil
+
+# Transform to matrix
+as.matrix(HMfil[-c(1:4)]) -> HMfilM
+row.names(HMfilM) <- HMfil$Sample_ID
+
+# Run PCA
+prcomp(HMfilM, 
+       center = TRUE, 
+       scale. = TRUE) -> F.PCA
+```   
+<p>&nbsp;</p>   
+- PCA summary
+```{r}
+# summary
+summary(F.PCA)
+```   
+<p>&nbsp;</p>
+**Figure 24:** Screeplot
+```{r}
+# screeplot
+screeplot(F.PCA, 
+          npcs = min(10, length(F.PCA$sdev)),
+          type= "lines")
+```   
+<p>&nbsp;</p>
+**Figure 24:** Principal component analysis of filtered dataset
+```{r, warning=FALSE,message=FALSE}
+# All samples
+ggbiplot(F.PCA, 
+         ellipse = TRUE,
+         obs.scale = 1,
+         var.scale = 1) +
+  geom_point(aes(shape=factor(HMfil$Species),
+                 colour=factor(HMfil$Sample_type)),
+             size=4) +
+  scale_shape_manual (values= c(15, 16, 0, 1, 17, 18, 5, 2, 19, 7,10)) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title = element_text(size = 11),
+        legend.text = element_text(size = 9),
+        legend.key.size = unit(0.5, "cm"),
+        legend.key.width = unit(0.5,"cm")) +
+  guides(fill = guide_legend(keywidth = 0.5, 
+                                 keyheight = 0.5,
+                             ncol = 2 )) +
+  labs(shape="Species", 
+       colour="Sample type") +
+   scale_color_brewer(palette = "Paired")
+
+detach("package:ggbiplot", unload = TRUE)
+detach("package:plyr", unload = TRUE)
+```   
+<p>&nbsp;</p>
+## 5.2. Descriptive statitsics by sample species
+### 5.2.1 Myctophids
+```{r, warning=FALSE,message=FALSE}
+# Select only myctophids, and get summary
+HM %>%
+  filter(Species == "LF") %>%
+  select(-c(Au, V, Mo, Ru, In, La, Lu, Th, Be, Er, Yb, Re)) %>%
+  pivot_longer("Li_6":"Pr", 
+               names_to = "Elements") -> MicLong
+
+# transform from ng to ug/g (ppm)
+MicLong$value/1000 -> MicLong$value
+
+as.data.frame (MicLong %>%
+                 group_by(Elements) %>%
+                 summarise(median = median(value),
+                           mean = round(mean(value),5),
+                           sd = round(sd(value),5),
+                           min = round(min(value),5),
+                           max = round(max(value),5)) %>%
+                 ungroup())
+```
+<p>&nbsp;</p>
+### 5.2.2 Sea cucumber
+```{r, warning=FALSE,message=FALSE}
+# Select only cucumber, and get summary
+HM %>%
+  filter(Species == "Cucumber") %>%
+  select(-c(Au, V, Mo, Ru, In, La, Lu, Th, Be, Er, Yb, Re)) %>%
+  pivot_longer("Li_6":"Pr", 
+               names_to = "Elements") -> cucumberLong
+
+# transform from ng to ug/g (ppm)
+round(cucumberLong$value/1000, 5) -> cucumberLong$value
+
+# Summary descriptive stats
+as.data.frame (cucumberLong %>%
+                 group_by(Elements) %>%
+                 summarise(median = median(value),
+                           mean = round(mean(value),5),
+                           sd = round(sd(value),5),
+                           min = round(min(value),5),
+                           max = round(max(value),5)) %>%
+                 ungroup())
+```   
+<p>&nbsp;</p>
+### 5.2.3 Octopus   
+```{r, warning=FALSE,message=FALSE}
+HM %>%
+  filter(Species == "Octopus") %>%
+  select(-c(Au, V, Mo, Ru, In, La, Lu, Th, Be, Er, Yb, Re)) %>%
+  pivot_longer("Li_6":"Pr", 
+               names_to = "Elements") -> OctopusLong
+
+# transform from ng to ug/g (ppm)
+round(OctopusLong$value/1000, 5) -> OctopusLong$value
+
+# summary descriptive statistics
+cols <- c("Elements","Sample_type")
+
+as.data.frame (OctopusLong %>%
+                 group_by(across(all_of(cols))) %>%
+                 summarise(median = median(value),
+                           mean = round(mean(value),4),
+                           sd = round(sd(value),4),
+                           min = round(min(value),6),
+                           max = round(max(value),6)) %>%
+                 ungroup())
+``` 
+### 5.2.4. Lobster   
+```{r, warning=FALSE,message=FALSE}
+HM %>%
+  filter(Species == "Lobster") %>%
+  select(-c(Au, V, Mo, Ru, In, La, Lu, Th, Be, Er, Yb, Re)) %>%
+  pivot_longer("Li_6":"Pr", 
+               names_to = "Elements") -> LobsterLong
+
+# transform from ng to ug/g (ppm)
+round(LobsterLong$value/1000, 5) -> LobsterLong$value
+
+# summary descriptive statistics
+cols <- c("Elements","Sample_type")
+
+as.data.frame (LobsterLong %>%
+                 group_by(across(all_of(cols))) %>%
+                 summarise(median = median(value),
+                           mean = round(mean(value),5),
+                           min = round(min(value),5),
+                           max = round(max(value),5)) %>%
+                 ungroup())
+```   
+## 5.2.5. Maggot  
+```{r, warning=FALSE,message=FALSE}
+HM %>%
+  filter(Species == "Maggot") %>%
+  select(-c(Au, V, Mo, Ru, In, La, Lu, Th, Be, Er, Yb, Re)) %>%
+  pivot_longer("Li_6":"Pr", 
+               names_to = "Elements") -> MaggotsLong
+
+# transform from ng to ug/g (ppm)
+round(MaggotsLong$value/1000, 3) -> MaggotsLong$value
+
+# summary descriptive statistics
+cols <- c("Elements","Sample_type")
+
+as.data.frame (MaggotsLong %>%
+                 group_by(across(all_of(cols))) %>%
+                 summarise(median = median(value),
+                           mean = round(mean(value),3),
+                           sd = round(sd(value),3)) %>%
+                 ungroup())
+```  
+<p>&nbsp;</p>
+## 5.3. Trace element distribution in octopus
+### 5.3.1. Cd  
+<p>&nbsp;</p>
+**Figure 25:** 
+```{r, warning=FALSE,message=FALSE}
+HM %>%
+  filter(Species == "Octopus")  %>%
+  ggplot(aes(x=Sample_type, 
+             y= round((Cd/1000), digits = 1), 
+             colour=Sample_ID, 
+             group=Sample_ID))+
+    geom_line()+
+    geom_point() +
+   scale_fill_manual(values = c("#1b9e77",
+                                "#d95f02",
+                                "#7570b3")) +
+  scale_color_manual(values = c("#1b9e77",
+                                "#d95f02",
+                                "#7570b3")) +
+  ylab(" Cd ug/g ww") +
+  xlab(NULL) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "grey"))
+```  
+### 5.3.2. Zn
+<p>&nbsp;</p>
+**Figure 26:**
+```{r}
+HM %>%
+  filter(Species == "Octopus")  %>%
+  ggplot(aes(x=Sample_type, 
+             y= round((Zn/1000), digits = 1), 
+             colour=Sample_ID, 
+             group=Sample_ID))+
+    geom_line()+
+    geom_point() +
+   scale_fill_manual(values = c("#1b9e77",
+                                "#d95f02",
+                                "#7570b3")) +
+  scale_color_manual(values = c("#1b9e77",
+                                "#d95f02",
+                                "#7570b3")) +
+  ylab("Zn ppm ww") +
+  xlab(NULL) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "grey"))
+```   
+### 5.3.2. Hg (results in ppb) -> smaller numbers thus, easier to look at
+<p>&nbsp;</p>
+**Figure 27:**
+```{r}
+HM %>%
+  filter(Species == "Octopus")  %>%
+  ggplot(aes(x=Sample_type, 
+             y= Hg, 
+             colour=Sample_ID, 
+             group=Sample_ID))+
+    geom_line()+
+    geom_point() +
+   scale_fill_manual(values = c("#1b9e77",
+                                "#d95f02",
+                                "#7570b3")) +
+  scale_color_manual(values = c("#1b9e77",
+                                "#d95f02",
+                                "#7570b3")) +
+  ylab("Hg ppb ww") +
+  xlab(NULL) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "grey"))
+```  
+### 5.3.4 Se (results in ppb) -> smaller numbers thus, easier to look at
+<p>&nbsp;</p>
+**Figure 28:**
+```{r}
+HM %>%
+  filter(Species == "Octopus")  %>%
+  ggplot(aes(x=Sample_type, 
+             y= Se, 
+             colour=Sample_ID, 
+             group=Sample_ID))+
+    geom_line()+
+    geom_point() +
+   scale_fill_manual(values = c("#1b9e77",
+                                "#d95f02",
+                                "#7570b3")) +
+  scale_color_manual(values = c("#1b9e77",
+                                "#d95f02",
+                                "#7570b3")) +
+  ylab("Se ppb ww") +
+  xlab(NULL) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "grey"))
+```   
+<p>&nbsp;</p>
+# 6. JFFS bones 
+<p>&nbsp;</p>   
+- Load metadata  
+```{r}
+# Heavy metal metada with all the samples analysed
+read.csv("HM_B.csv", header = TRUE) -> HM_bone
+```  
+<p>&nbsp;</p> 
+## 6.1 Descriptive stats of relevant elements
+```{r, warning=FALSE,message=FALSE}
+HM_bone %>%
+  select(c(Age,Cd, Ca, P, Si)) %>%
+  pivot_longer("Cd":"Si", 
+               names_to = "Elements") -> BoneLong
+
+# summary descriptive statistics
+cols <- c("Elements","Age")
+
+
+as.data.frame (BoneLong %>%
+                 group_by(across(all_of(cols))) %>%
+                 summarise(median = median(value),
+                           mean = round(mean(value),3),
+                           sd = round(sd(value),3),
+                           min = round(min(value),3),
+                           max = round(max(value),3)) %>%
+                 ungroup())
+```
+## 6.1 Correlation analysis
+<p>&nbsp;</p>
+- Run the correlation
+```{r, warning=FALSE,message=FALSE}
+library(Hmisc)
+library(corrplot)
+
+# Remove with low values or NA's columns
+HM_bone %>%
+  select(-c(Au, V, In, La, Bi, Ir, Sn, Re)) -> HM_bone
+
+# Transform to matrix
+as.matrix(HM_bone[-c(1:5)]) -> HMB_Mat
+row.names(HMB_Mat) <- HM_bone$Sample_ID
+
+rcorr(HMB_Mat, type = "spearman") -> Fcor
+```  
+<p>&nbsp;</p>
+<p>&nbsp;</p>
+**Figure 29:** Correlation plot of trace elements found in JFFS bone samples
+```{r}
+corrplot(Fcor$r,
+         tl.cex = 0.6,
+         tl.col = "black",
+         type = "lower",
+         order = "hclust",
+         p.mat = Fcor$P,
+         sig.level = 0.05,
+         insig = "blank",
+         tl.srt = 45,
+         cl.ratio = 0.1) 
+
+detach("package:Hmisc", unload = TRUE)
+detach("package:corrplot", unload = TRUE)
+```     
+Interestingly, there was no correlation between Cd and Ca, P  
+<p>&nbsp;</p> 
+- visualisation of significant strong correlations  
+**Figure 30:** Dependency of Ca on Cd 
+```{r}
+ggplot(HM_bone, aes(x = Cd, 
+                   y = Ca/1000)) +
+  geom_point(size = 3) +
+  geom_smooth(method = lm, se = FALSE) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title = element_text(size = 11),
+        legend.text = element_text(size = 9),
+        legend.key.size = unit(0.5, "cm"),
+        legend.key.width = unit(0.5,"cm")) +
+  guides(fill = guide_legend(keywidth = 0.5, 
+                             keyheight = 0.5,
+                             ncol = 2 )) +
+  xlab("Cd concentration (ng/g ww)") + 
+  ylab("Ca concentration (mg/g ww)")
+```   
+<p>&nbsp;</p> 
+**Figure 31:** Dependency of P on Cd
+```{r}
+ggplot(HM_bone, aes(x = Cd, 
+                   y = P/1000)) +
+  geom_point(size = 3) +
+  geom_smooth(method = lm, se = FALSE) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title = element_text(size = 11),
+        legend.text = element_text(size = 9),
+        legend.key.size = unit(0.5, "cm"),
+        legend.key.width = unit(0.5,"cm")) +
+  guides(fill = guide_legend(keywidth = 0.5, 
+                             keyheight = 0.5,
+                             ncol = 2 )) +
+  xlab("Cd concentration (ng/g ww)") + 
+  ylab("P concentration (mg/g ww)")
+```
+<p>&nbsp;</p> 
+**Figure 32:** Dependency of Zn on Cd
+```{r}
+ggplot(HM_bone, aes(x = Cd, 
+                   y = Zn/1000)) +
+  geom_point(size = 3) +
+  geom_smooth(method = lm, se = FALSE) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title = element_text(size = 11),
+        legend.text = element_text(size = 9),
+        legend.key.size = unit(0.5, "cm"),
+        legend.key.width = unit(0.5,"cm")) +
+  guides(fill = guide_legend(keywidth = 0.5, 
+                             keyheight = 0.5,
+                             ncol = 2 )) +
+  xlab("Cd concentration (ng/g)") + 
+  ylab("Zn concentration (ug/g)")
+```   
+<p>&nbsp;</p> 
+**Figure 33:** Dependency of Si on Cd
+```{r}
+ggplot(HM_bone, aes(x = Cd, 
+                   y = Si)) +
+  geom_point(size = 3) +
+  geom_smooth(method = lm, se = FALSE) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.title = element_text(size = 11),
+        legend.text = element_text(size = 9),
+        legend.key.size = unit(0.5, "cm"),
+        legend.key.width = unit(0.5,"cm")) +
+  guides(fill = guide_legend(keywidth = 0.5, 
+                             keyheight = 0.5,
+                             ncol = 2 )) +
+  xlab("Cd concentration (ng/g ww)") + 
+  ylab("Si concentration (ug/g ww)")
+```   
+<p>&nbsp;</p>
+# 7. Element concentrations in bone by age
+## 7.1. Cadmium   
+**Figure 34:** Box plot representation of Cd concentration in JFFS according to age
+```{r}
+HM_bone %>%
+  ggplot(aes(x = Age, 
+             y= Cd, 
+             fill = Age, 
+             colour = Age)) +
+  geom_boxplot(outlier.shape = NA, 
+               show.legend = FALSE,
+               alpha = 0.2) +
+  geom_jitter(height = 0, size = 2, 
+              width = 0.2,
+              show.legend = FALSE) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  ylab("Cd (ng/g ww)") +
+  xlab(NULL) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "grey"))
+```   
+<p>&nbsp;</p>
+- Wilcoxon rank sum non-parametric test
+```{r}
+wilcox.test(Cd ~ Age, 
+            data = HM_bone, conf.int = T)
+```
+not significant perhaps due to small small size and heterogeinity in the groups  
+<p>&nbsp;</p>
+## 7.2. Ca   
+**Figure 35:** Box plot representation of Ca concentration across fur seal species
+```{r}
+HM_bone %>%
+  ggplot(aes(x = Age, 
+             y= Ca/1000, 
+             fill = Age, 
+             colour = Age)) +
+  geom_boxplot(outlier.shape = NA, 
+               show.legend = FALSE,
+               alpha = 0.2) +
+  geom_jitter(height = 0, size = 2, 
+              width = 0.2,
+              show.legend = FALSE) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  ylab(" Ca (mg/g ww)") +
+  xlab(NULL) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "grey"))
+```   
+<p>&nbsp;</p>
+- Wilcoxon rank sum non-parametric test
+```{r}
+wilcox.test(Ca ~ Age, 
+            data = HM_bone, conf.int = T)
+```
+## 7.3. Si   
+**Figure 36:** Box plot representation of Si concentration across fur seal species
+```{r}
+HM_bone %>%
+  ggplot(aes(x = Age, 
+             y= Si, 
+             fill = Age, 
+             colour = Age)) +
+  geom_boxplot(outlier.shape = NA, 
+               show.legend = FALSE,
+               alpha = 0.2) +
+  geom_jitter(height = 0, size = 2, 
+              width = 0.2,
+              show.legend = FALSE) +
+  scale_fill_manual(values = c("#1b9e77", "#d95f02")) +
+  scale_color_manual(values = c("#1b9e77", "#d95f02")) +
+  ylab(" Si (ug/g ww)") +
+  xlab(NULL) +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.line = element_line(colour = "grey"))
+```   
+<p>&nbsp;</p>
+- Wilcoxon rank sum non-parametric test
+```{r}
+wilcox.test(Si ~ Age, 
+            data = HM_bone, conf.int = T)
+```
